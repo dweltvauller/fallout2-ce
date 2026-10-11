@@ -345,6 +345,7 @@ static bool gameMouseClickOnInterfaceBar();
 static bool gameMouseLongPressUsesLootActionForCritter(Object* object);
 
 static void customMouseModeFrmsInit();
+static void gameMousePreviewMoveCost(int distance);
 
 static bool gameMouseLongPressUsesLootActionForCritter(Object* object)
 {
@@ -895,19 +896,27 @@ void gameMouseRefresh()
                 if (actionPointsRequired <= gDude->data.critter.combat.ap) {
                     snprintf(formattedActionPoints, sizeof(formattedActionPoints), "%d", actionPointsRequired);
                     color = COLOR_WHITE;
-                    interfaceSetActionPointsPreview(actionPointsRequired, std::min(actionPointsMax, _combat_free_move), true);
                 } else {
                     snprintf(formattedActionPoints, sizeof(formattedActionPoints), "%c", 'X');
                     color = COLOR_RED;
-
-                    // The dude still walks as far as the AP allow, spending all of it.
-                    interfaceSetActionPointsPreview(gDude->data.critter.combat.ap, _combat_free_move, true);
                 }
+
+                gameMousePreviewMoveCost(distance);
             }
         } else {
             snprintf(formattedActionPoints, sizeof(formattedActionPoints), "%c", 'X');
             color = COLOR_RED;
-            interfaceClearActionPointsPreview();
+
+            // Clicking a blocked hex still walks the dude up to the hex next
+            // to it, as long as a path leads there.
+            int reachableDistance = isInCombat()
+                ? _make_path(gDude, gDude->tile, gGameMouseHexCursor->tile, nullptr, 0) - 1
+                : 0;
+            if (reachableDistance > 0) {
+                gameMousePreviewMoveCost(reachableDistance);
+            } else {
+                interfaceClearActionPointsPreview();
+            }
         }
 
         if (gameMouseRenderActionPoints(formattedActionPoints, color) == 0) {
@@ -958,6 +967,20 @@ void gameMouseRefresh()
     case 2:
         tileWindowRefreshRect(&r26, gElevation);
         break;
+    }
+}
+
+// Marks the AP a combat move of `distance` hexes would spend on the AP bar.
+static void gameMousePreviewMoveCost(int distance)
+{
+    int actionPointsMax = critterGetMovementPointCostAdjustedForCrippledLegs(gDude, distance);
+    int actionPointsRequired = std::max(0, actionPointsMax - _combat_free_move);
+
+    if (actionPointsRequired <= gDude->data.critter.combat.ap) {
+        interfaceSetActionPointsPreview(actionPointsRequired, std::min(actionPointsMax, _combat_free_move), true);
+    } else {
+        // The dude still walks as far as the AP allow, spending all of it.
+        interfaceSetActionPointsPreview(gDude->data.critter.combat.ap, _combat_free_move, true);
     }
 }
 
