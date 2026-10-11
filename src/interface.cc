@@ -341,7 +341,7 @@ static int apBarXOffset;
 constexpr int kApBarYOffset = 14;
 
 // How far AP cost preview bulbs are mixed toward the empty socket, in percent.
-constexpr int kApBarPreviewDimPercent = 35;
+constexpr int kApBarPreviewDimPercent = 60;
 
 static FrmImage _inventoryButtonNormalFrmImage;
 static FrmImage _inventoryButtonPressedFrmImage;
