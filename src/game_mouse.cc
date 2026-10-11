@@ -900,7 +900,7 @@ void gameMouseRefresh()
                     snprintf(formattedActionPoints, sizeof(formattedActionPoints), "%c", 'X');
                     color = COLOR_RED;
 
-                    // The dude still walks as far as his AP allow, spending all of it.
+                    // The dude still walks as far as the AP allow, spending all of it.
                     interfaceSetActionPointsPreview(gDude->data.critter.combat.ap, _combat_free_move, true);
                 }
             }
