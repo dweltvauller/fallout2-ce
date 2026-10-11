@@ -179,6 +179,7 @@ static void customInterfaceBarExit();
 static void extendedApBarInitToWindow();
 static void apBarRender();
 static void apBarPreviewTicker();
+static int apBarPreviewFade();
 
 static void sidePanelsInit();
 static void sidePanelsExit();
@@ -202,13 +203,13 @@ static bool gInterfaceBarHidden = false;
 static int apBarActionPoints = 0;
 static int apBarBonusActionPoints = 0;
 
-// AP cost preview: bulbs the hovered move or attack would spend blink between
+// AP cost preview: bulbs the hovered move or attack would spend fade between
 // their lit color and the empty socket.
 static int apBarPreviewActionPoints = 0;
 static int apBarPreviewBonusActionPoints = 0;
 static bool apBarPreviewIsMove = false;
-static bool apBarPreviewBlinkOff = false;
-static unsigned int apBarPreviewBlinkTime = 0;
+static int apBarPreviewPhase = 0;
+static unsigned int apBarPreviewPhaseTime = 0;
 
 // 0x518F18 inventoryButton
 static int gInventoryButton = -1;
@@ -343,7 +344,10 @@ static int apBarWidth;
 static int apBarXOffset;
 constexpr int kApBarYOffset = 14;
 
-constexpr unsigned int kApBarPreviewBlinkDelay = 250;
+// The AP cost preview steps from lit down to empty and back up, one step per
+// delay: 2 * kApBarPreviewFadeSteps * kApBarPreviewFadeDelay per cycle.
+constexpr int kApBarPreviewFadeSteps = 8;
+constexpr unsigned int kApBarPreviewFadeDelay = 100;
 
 static FrmImage _inventoryButtonNormalFrmImage;
 static FrmImage _inventoryButtonPressedFrmImage;
@@ -1086,10 +1090,8 @@ void interfaceSetActionPointsPreview(int actionPoints, int bonusActionPoints, bo
     apBarPreviewActionPoints = actionPoints;
     apBarPreviewBonusActionPoints = bonusActionPoints;
     apBarPreviewIsMove = move;
-
-    // Start dark so the preview shows up as soon as the cursor settles.
-    apBarPreviewBlinkOff = true;
-    apBarPreviewBlinkTime = getTicks();
+    apBarPreviewPhase = 0;
+    apBarPreviewPhaseTime = getTicks();
     apBarRender();
 }
 
@@ -1101,7 +1103,16 @@ void interfaceClearActionPointsPreview()
 
     apBarPreviewActionPoints = 0;
     apBarPreviewBonusActionPoints = 0;
+    apBarPreviewPhase = 0;
     apBarRender();
+}
+
+// 0 is fully lit, kApBarPreviewFadeSteps is the empty socket.
+static int apBarPreviewFade()
+{
+    return apBarPreviewPhase <= kApBarPreviewFadeSteps
+        ? apBarPreviewPhase
+        : 2 * kApBarPreviewFadeSteps - apBarPreviewPhase;
 }
 
 static void apBarPreviewTicker()
@@ -1115,13 +1126,37 @@ static void apBarPreviewTicker()
     }
 
     unsigned int now = getTicks();
-    if (getTicksBetween(now, apBarPreviewBlinkTime) < kApBarPreviewBlinkDelay) {
+    if (getTicksBetween(now, apBarPreviewPhaseTime) < kApBarPreviewFadeDelay) {
         return;
     }
 
-    apBarPreviewBlinkTime = now;
-    apBarPreviewBlinkOff = !apBarPreviewBlinkOff;
+    apBarPreviewPhaseTime = now;
+    apBarPreviewPhase = (apBarPreviewPhase + 1) % (2 * kApBarPreviewFadeSteps);
     apBarRender();
+}
+
+// Draws a bulb mixed with the empty socket already under it, from fully lit
+// (fade 0) to fully empty (kApBarPreviewFadeSteps).
+static void apBarBlitFadedBulb(ConstBuffer2D bulb, int x, int y, int fade)
+{
+    Buffer2D dest = interfaceWindowBuf2D();
+    int lit = kApBarPreviewFadeSteps - fade;
+
+    for (int row = 0; row < kApBarBulbSize; row++) {
+        for (int column = 0; column < kApBarBulbSize; column++) {
+            unsigned char* pixel = dest.data + (y + row) * dest.width + x + column;
+            int bulbColor = bulb.data[row * bulb.width + column];
+            int socketColor = *pixel;
+
+            int rgb[3];
+            for (int channel = 0; channel < 3; channel++) {
+                int value = (_cmap[3 * bulbColor + channel] * lit + _cmap[3 * socketColor + channel] * fade) / kApBarPreviewFadeSteps;
+                rgb[channel] = value >> 1;
+            }
+
+            *pixel = _colorTable[(rgb[0] << 10) | (rgb[1] << 5) | rgb[2]];
+        }
+    }
 }
 
 static void apBarRender()
@@ -1139,7 +1174,7 @@ static void apBarRender()
     // for a cost the dude cannot pay.
     int previewActionPoints = 0;
     int previewBonusActionPoints = 0;
-    if (apBarPreviewBlinkOff
+    if (apBarPreviewFade() > 0
         && actionPointsLeft >= 0
         && apBarPreviewActionPoints <= actionPointsLeft
         && apBarPreviewBonusActionPoints <= std::max(bonusActionPoints, 0)) {
@@ -1180,15 +1215,17 @@ static void apBarRender()
         bool spent = index < actionPointsLeft
             ? previewActionPoints > 0 && index >= apBarActionPoints - previewActionPoints
             : previewBonusActionPoints > 0 && index - actionPointsLeft >= apBarBonusActionPoints - previewBonusActionPoints;
-        if (spent) {
-            continue;
-        }
 
         constexpr int bulbXOffset = kApBarBulbSize + kApBarBulbMargin;
         auto frmBuf = index < actionPointsLeft
             ? bulbFrmBuf
             : _yellowLightFrmImage.getBuffer();
-        blitBuffer2D(frmBuf, 0, 0, kApBarBulbSize, kApBarBulbSize, interfaceWindowBuf2D(), gInterfaceBarContentOffset + apBarXOffset + index * bulbXOffset, kApBarYOffset);
+        int bulbX = gInterfaceBarContentOffset + apBarXOffset + index * bulbXOffset;
+        if (spent) {
+            apBarBlitFadedBulb(frmBuf, bulbX, kApBarYOffset, apBarPreviewFade());
+        } else {
+            blitBuffer2D(frmBuf, 0, 0, kApBarBulbSize, kApBarBulbSize, interfaceWindowBuf2D(), bulbX, kApBarYOffset);
+        }
     }
 
     if (!gInterfaceBarInitialized) {
