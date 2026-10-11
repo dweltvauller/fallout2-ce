@@ -178,8 +178,6 @@ static void customInterfaceBarExit();
 
 static void extendedApBarInitToWindow();
 static void apBarRender();
-static void apBarPreviewTicker();
-static int apBarPreviewFade();
 
 static void sidePanelsInit();
 static void sidePanelsExit();
@@ -203,13 +201,11 @@ static bool gInterfaceBarHidden = false;
 static int apBarActionPoints = 0;
 static int apBarBonusActionPoints = 0;
 
-// AP cost preview: bulbs the hovered move or attack would spend fade between
-// their lit color and the empty socket.
+// AP cost preview: bulbs the hovered move or attack would spend are drawn
+// dimmer than the rest.
 static int apBarPreviewActionPoints = 0;
 static int apBarPreviewBonusActionPoints = 0;
 static bool apBarPreviewIsMove = false;
-static int apBarPreviewPhase = 0;
-static unsigned int apBarPreviewPhaseTime = 0;
 
 // 0x518F18 inventoryButton
 static int gInventoryButton = -1;
@@ -344,10 +340,8 @@ static int apBarWidth;
 static int apBarXOffset;
 constexpr int kApBarYOffset = 14;
 
-// The AP cost preview steps from lit down to empty and back up, one step per
-// delay: 2 * kApBarPreviewFadeSteps * kApBarPreviewFadeDelay per cycle.
-constexpr int kApBarPreviewFadeSteps = 8;
-constexpr unsigned int kApBarPreviewFadeDelay = 100;
+// How far AP cost preview bulbs are mixed toward the empty socket, in percent.
+constexpr int kApBarPreviewDimPercent = 35;
 
 static FrmImage _inventoryButtonNormalFrmImage;
 static FrmImage _inventoryButtonPressedFrmImage;
@@ -656,8 +650,6 @@ int interfaceInit()
     gInterfaceBarInitialized = false;
     gInterfaceBarHidden = true;
 
-    tickersAdd(apBarPreviewTicker);
-
     quickToolbarSetEnabled(settings.ui.quick_toolbar_visible);
     quickToolbarInit();
 
@@ -688,7 +680,6 @@ void interfaceFree()
 {
     quickToolbarFree();
 
-    tickersRemove(apBarPreviewTicker);
     apBarPreviewActionPoints = 0;
     apBarPreviewBonusActionPoints = 0;
 
@@ -1090,8 +1081,6 @@ void interfaceSetActionPointsPreview(int actionPoints, int bonusActionPoints, bo
     apBarPreviewActionPoints = actionPoints;
     apBarPreviewBonusActionPoints = bonusActionPoints;
     apBarPreviewIsMove = move;
-    apBarPreviewPhase = 0;
-    apBarPreviewPhaseTime = getTicks();
     apBarRender();
 }
 
@@ -1103,44 +1092,14 @@ void interfaceClearActionPointsPreview()
 
     apBarPreviewActionPoints = 0;
     apBarPreviewBonusActionPoints = 0;
-    apBarPreviewPhase = 0;
     apBarRender();
 }
 
-// 0 is fully lit, kApBarPreviewFadeSteps is the empty socket.
-static int apBarPreviewFade()
-{
-    return apBarPreviewPhase <= kApBarPreviewFadeSteps
-        ? apBarPreviewPhase
-        : 2 * kApBarPreviewFadeSteps - apBarPreviewPhase;
-}
-
-static void apBarPreviewTicker()
-{
-    if (apBarPreviewActionPoints == 0 && apBarPreviewBonusActionPoints == 0) {
-        return;
-    }
-
-    if (gInterfaceBarWindow == -1 || gInterfaceBarHidden) {
-        return;
-    }
-
-    unsigned int now = getTicks();
-    if (getTicksBetween(now, apBarPreviewPhaseTime) < kApBarPreviewFadeDelay) {
-        return;
-    }
-
-    apBarPreviewPhaseTime = now;
-    apBarPreviewPhase = (apBarPreviewPhase + 1) % (2 * kApBarPreviewFadeSteps);
-    apBarRender();
-}
-
-// Draws a bulb mixed with the empty socket already under it, from fully lit
-// (fade 0) to fully empty (kApBarPreviewFadeSteps).
-static void apBarBlitFadedBulb(ConstBuffer2D bulb, int x, int y, int fade)
+// Draws a bulb mixed with the empty socket already under it.
+static void apBarBlitDimBulb(ConstBuffer2D bulb, int x, int y)
 {
     Buffer2D dest = interfaceWindowBuf2D();
-    int lit = kApBarPreviewFadeSteps - fade;
+    constexpr int kLit = 100 - kApBarPreviewDimPercent;
 
     for (int row = 0; row < kApBarBulbSize; row++) {
         for (int column = 0; column < kApBarBulbSize; column++) {
@@ -1150,7 +1109,7 @@ static void apBarBlitFadedBulb(ConstBuffer2D bulb, int x, int y, int fade)
 
             int rgb[3];
             for (int channel = 0; channel < 3; channel++) {
-                int value = (_cmap[3 * bulbColor + channel] * lit + _cmap[3 * socketColor + channel] * fade) / kApBarPreviewFadeSteps;
+                int value = (_cmap[3 * bulbColor + channel] * kLit + _cmap[3 * socketColor + channel] * kApBarPreviewDimPercent) / 100;
                 rgb[channel] = value >> 1;
             }
 
@@ -1170,12 +1129,11 @@ static void apBarRender()
     int actionPointsLeft = apBarActionPoints;
     int bonusActionPoints = apBarBonusActionPoints;
 
-    // Bulbs spent from the end of each pool, bonus move first. Nothing blinks
+    // Bulbs spent from the end of each pool, bonus move first. Nothing dims
     // for a cost the dude cannot pay.
     int previewActionPoints = 0;
     int previewBonusActionPoints = 0;
-    if (apBarPreviewFade() > 0
-        && actionPointsLeft >= 0
+    if (actionPointsLeft >= 0
         && apBarPreviewActionPoints <= actionPointsLeft
         && apBarPreviewBonusActionPoints <= std::max(bonusActionPoints, 0)) {
         previewActionPoints = apBarPreviewActionPoints;
@@ -1222,7 +1180,7 @@ static void apBarRender()
             : _yellowLightFrmImage.getBuffer();
         int bulbX = gInterfaceBarContentOffset + apBarXOffset + index * bulbXOffset;
         if (spent) {
-            apBarBlitFadedBulb(frmBuf, bulbX, kApBarYOffset, apBarPreviewFade());
+            apBarBlitDimBulb(frmBuf, bulbX, kApBarYOffset);
         } else {
             blitBuffer2D(frmBuf, 0, 0, kApBarBulbSize, kApBarBulbSize, interfaceWindowBuf2D(), bulbX, kApBarYOffset);
         }
