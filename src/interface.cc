@@ -202,7 +202,7 @@ static int apBarActionPoints = 0;
 static int apBarBonusActionPoints = 0;
 
 // AP cost preview: bulbs the hovered move or attack would spend are drawn
-// dimmer than the rest.
+// red.
 static int apBarPreviewActionPoints = 0;
 static int apBarPreviewBonusActionPoints = 0;
 static bool apBarPreviewIsMove = false;
@@ -340,8 +340,6 @@ static int apBarWidth;
 static int apBarXOffset;
 constexpr int kApBarYOffset = 14;
 
-// How far AP cost preview bulbs are mixed toward the empty socket, in percent.
-constexpr int kApBarPreviewDimPercent = 60;
 
 static FrmImage _inventoryButtonNormalFrmImage;
 static FrmImage _inventoryButtonPressedFrmImage;
@@ -1095,29 +1093,6 @@ void interfaceClearActionPointsPreview()
     apBarRender();
 }
 
-// Draws a bulb mixed with the empty socket already under it.
-static void apBarBlitDimBulb(ConstBuffer2D bulb, int x, int y)
-{
-    Buffer2D dest = interfaceWindowBuf2D();
-    constexpr int kLit = 100 - kApBarPreviewDimPercent;
-
-    for (int row = 0; row < kApBarBulbSize; row++) {
-        for (int column = 0; column < kApBarBulbSize; column++) {
-            unsigned char* pixel = dest.data + (y + row) * dest.width + x + column;
-            int bulbColor = bulb.data[row * bulb.width + column];
-            int socketColor = *pixel;
-
-            int rgb[3];
-            for (int channel = 0; channel < 3; channel++) {
-                int value = (_cmap[3 * bulbColor + channel] * kLit + _cmap[3 * socketColor + channel] * kApBarPreviewDimPercent) / 100;
-                rgb[channel] = value >> 1;
-            }
-
-            *pixel = _colorTable[(rgb[0] << 10) | (rgb[1] << 5) | rgb[2]];
-        }
-    }
-}
-
 static void apBarRender()
 {
     ConstBuffer2D bulbFrmBuf {};
@@ -1129,8 +1104,8 @@ static void apBarRender()
     int actionPointsLeft = apBarActionPoints;
     int bonusActionPoints = apBarBonusActionPoints;
 
-    // Bulbs spent from the end of each pool, bonus move first. Nothing dims
-    // for a cost the dude cannot pay.
+    // Bulbs spent from the end of each pool, bonus move first. Nothing turns
+    // red for a cost the dude cannot pay.
     int previewActionPoints = 0;
     int previewBonusActionPoints = 0;
     if (actionPointsLeft >= 0
@@ -1169,21 +1144,18 @@ static void apBarRender()
     int numBulbs = actionPointsLeft + bonusActionPoints;
     for (int index = 0; index < numBulbs; index++) {
         // Compare against the full pools, so a bar clamped to its maximum
-        // only darkens bulbs the cost actually reaches.
+        // only marks bulbs the cost actually reaches.
         bool spent = index < actionPointsLeft
             ? previewActionPoints > 0 && index >= apBarActionPoints - previewActionPoints
             : previewBonusActionPoints > 0 && index - actionPointsLeft >= apBarBonusActionPoints - previewBonusActionPoints;
 
         constexpr int bulbXOffset = kApBarBulbSize + kApBarBulbMargin;
-        auto frmBuf = index < actionPointsLeft
+        auto frmBuf = spent
+            ? _redLightFrmImage.getBuffer()
+            : index < actionPointsLeft
             ? bulbFrmBuf
             : _yellowLightFrmImage.getBuffer();
-        int bulbX = gInterfaceBarContentOffset + apBarXOffset + index * bulbXOffset;
-        if (spent) {
-            apBarBlitDimBulb(frmBuf, bulbX, kApBarYOffset);
-        } else {
-            blitBuffer2D(frmBuf, 0, 0, kApBarBulbSize, kApBarBulbSize, interfaceWindowBuf2D(), bulbX, kApBarYOffset);
-        }
+        blitBuffer2D(frmBuf, 0, 0, kApBarBulbSize, kApBarBulbSize, interfaceWindowBuf2D(), gInterfaceBarContentOffset + apBarXOffset + index * bulbXOffset, kApBarYOffset);
     }
 
     if (!gInterfaceBarInitialized) {
