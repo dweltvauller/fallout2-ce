@@ -661,6 +661,8 @@ void gameMouseRefresh()
     }
 
     if (windowGetAtPoint(mouseX, mouseY) != gIsoWindow) {
+        interfaceClearActionPointsPreview();
+
         if (gGameMouseCursor == MOUSE_CURSOR_NONE) {
             gameMouseObjectsHide();
             gameMouseSetCursor(MOUSE_CURSOR_ARROW);
@@ -823,6 +825,12 @@ void gameMouseRefresh()
                     if (_combat_to_hit(pointedObject, &accuracy)) {
                         snprintf(formattedAccuracy, sizeof(formattedAccuracy), "%d%%", accuracy);
 
+                        HitMode hitMode;
+                        bool aiming;
+                        if (isInCombat() && interfaceGetCurrentHitMode(&hitMode, &aiming) != -1) {
+                            interfaceSetActionPointsPreview(weaponGetActionPointCost(gDude, hitMode, aiming), 0, false);
+                        }
+
                         if (pointedObjectIsCritter) {
                             if (pointedObject->data.critter.combat.team != 0) {
                                 color = COLOR_WHITE;
@@ -834,6 +842,7 @@ void gameMouseRefresh()
                         }
                     } else {
                         snprintf(formattedAccuracy, sizeof(formattedAccuracy), " %c ", 'X');
+                        interfaceClearActionPointsPreview();
 
                         if (pointedObjectIsCritter) {
                             if (pointedObject->data.critter.combat.team != 0) {
@@ -858,6 +867,8 @@ void gameMouseRefresh()
                         gGameMousePointedObject = pointedObject;
                     }
                 } else {
+                    interfaceClearActionPointsPreview();
+
                     Rect tmp;
                     if (gameMouseUpdateHexCursorFid(&tmp) == 0) {
                         tileWindowRefreshRect(&tmp, gElevation);
@@ -884,14 +895,17 @@ void gameMouseRefresh()
                 if (actionPointsRequired <= gDude->data.critter.combat.ap) {
                     snprintf(formattedActionPoints, sizeof(formattedActionPoints), "%d", actionPointsRequired);
                     color = COLOR_WHITE;
+                    interfaceSetActionPointsPreview(actionPointsRequired, std::min(actionPointsMax, _combat_free_move), true);
                 } else {
                     snprintf(formattedActionPoints, sizeof(formattedActionPoints), "%c", 'X');
                     color = COLOR_RED;
+                    interfaceClearActionPointsPreview();
                 }
             }
         } else {
             snprintf(formattedActionPoints, sizeof(formattedActionPoints), "%c", 'X');
             color = COLOR_RED;
+            interfaceClearActionPointsPreview();
         }
 
         if (gameMouseRenderActionPoints(formattedActionPoints, color) == 0) {
@@ -910,6 +924,8 @@ void gameMouseRefresh()
     _gmouse_3d_hover_test = false;
     gGameMouseLastX = mouseX;
     gGameMouseLastY = mouseY;
+
+    interfaceClearActionPointsPreview();
 
     if (!_gmouse_mapper_mode) {
         gameMouseSetBouncingCursorFrmId(InterfaceFrameId::Blank);
@@ -1451,6 +1467,8 @@ void gameMouseSetMode(GameMouseMode mode)
         return;
     }
 
+    interfaceClearActionPointsPreview();
+
     if (!_gmouse_3d_modes_enabled) {
         return;
     }
@@ -1686,6 +1704,8 @@ void gameMouseObjectsHide()
     if (!gGameMouseInitialized) {
         return;
     }
+
+    interfaceClearActionPointsPreview();
 
     int refreshFlags = 0;
 

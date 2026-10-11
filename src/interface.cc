@@ -177,6 +177,8 @@ static void customInterfaceBarInit();
 static void customInterfaceBarExit();
 
 static void extendedApBarInitToWindow();
+static void apBarRender();
+static void apBarPreviewTicker();
 
 static void sidePanelsInit();
 static void sidePanelsExit();
@@ -195,6 +197,18 @@ static bool gInterfaceBarEnabled = false;
 
 // 0x518F14 intfaceHidden
 static bool gInterfaceBarHidden = false;
+
+// AP bar contents from the last interfaceRenderActionPoints call.
+static int apBarActionPoints = 0;
+static int apBarBonusActionPoints = 0;
+
+// AP cost preview: bulbs the hovered move or attack would spend blink between
+// their lit color and the empty socket.
+static int apBarPreviewActionPoints = 0;
+static int apBarPreviewBonusActionPoints = 0;
+static bool apBarPreviewIsMove = false;
+static bool apBarPreviewBlinkOff = false;
+static unsigned int apBarPreviewBlinkTime = 0;
 
 // 0x518F18 inventoryButton
 static int gInventoryButton = -1;
@@ -328,6 +342,8 @@ static int apBarWidth;
 // AP bar offset relative to the content area of the Interface Bar window.
 static int apBarXOffset;
 constexpr int kApBarYOffset = 14;
+
+constexpr unsigned int kApBarPreviewBlinkDelay = 250;
 
 static FrmImage _inventoryButtonNormalFrmImage;
 static FrmImage _inventoryButtonPressedFrmImage;
@@ -636,6 +652,8 @@ int interfaceInit()
     gInterfaceBarInitialized = false;
     gInterfaceBarHidden = true;
 
+    tickersAdd(apBarPreviewTicker);
+
     quickToolbarSetEnabled(settings.ui.quick_toolbar_visible);
     quickToolbarInit();
 
@@ -657,12 +675,18 @@ void interfaceReset()
     indicatorBarReset();
 
     gInterfaceCurrentHand = HAND_LEFT;
+
+    interfaceClearActionPointsPreview();
 }
 
 // 0x45E440 intface_exit
 void interfaceFree()
 {
     quickToolbarFree();
+
+    tickersRemove(apBarPreviewTicker);
+    apBarPreviewActionPoints = 0;
+    apBarPreviewBonusActionPoints = 0;
 
     if (gInterfaceBarWindow != -1) {
         // SFALL
@@ -1034,10 +1058,93 @@ void interfaceRenderArmorClass(bool animate)
 // 0x45EE0C intface_update_move_points
 void interfaceRenderActionPoints(int actionPointsLeft, int bonusActionPoints)
 {
+    // A move preview goes stale once the dude starts walking, and nothing is
+    // spent once the turn is over. An attack preview stays while the cursor
+    // rests on the target, since the next attack costs the same.
+    if (actionPointsLeft == -1
+        || (apBarPreviewIsMove && (actionPointsLeft != apBarActionPoints || bonusActionPoints != apBarBonusActionPoints))) {
+        apBarPreviewActionPoints = 0;
+        apBarPreviewBonusActionPoints = 0;
+    }
+
+    apBarActionPoints = actionPointsLeft;
+    apBarBonusActionPoints = bonusActionPoints;
+    apBarRender();
+}
+
+void interfaceSetActionPointsPreview(int actionPoints, int bonusActionPoints, bool move)
+{
+    actionPoints = std::max(actionPoints, 0);
+    bonusActionPoints = std::max(bonusActionPoints, 0);
+
+    if (actionPoints == apBarPreviewActionPoints
+        && bonusActionPoints == apBarPreviewBonusActionPoints
+        && move == apBarPreviewIsMove) {
+        return;
+    }
+
+    apBarPreviewActionPoints = actionPoints;
+    apBarPreviewBonusActionPoints = bonusActionPoints;
+    apBarPreviewIsMove = move;
+
+    // Start dark so the preview shows up as soon as the cursor settles.
+    apBarPreviewBlinkOff = true;
+    apBarPreviewBlinkTime = getTicks();
+    apBarRender();
+}
+
+void interfaceClearActionPointsPreview()
+{
+    if (apBarPreviewActionPoints == 0 && apBarPreviewBonusActionPoints == 0) {
+        return;
+    }
+
+    apBarPreviewActionPoints = 0;
+    apBarPreviewBonusActionPoints = 0;
+    apBarRender();
+}
+
+static void apBarPreviewTicker()
+{
+    if (apBarPreviewActionPoints == 0 && apBarPreviewBonusActionPoints == 0) {
+        return;
+    }
+
+    if (gInterfaceBarWindow == -1 || gInterfaceBarHidden) {
+        return;
+    }
+
+    unsigned int now = getTicks();
+    if (getTicksBetween(now, apBarPreviewBlinkTime) < kApBarPreviewBlinkDelay) {
+        return;
+    }
+
+    apBarPreviewBlinkTime = now;
+    apBarPreviewBlinkOff = !apBarPreviewBlinkOff;
+    apBarRender();
+}
+
+static void apBarRender()
+{
     ConstBuffer2D bulbFrmBuf {};
 
     if (gInterfaceBarWindow == -1) {
         return;
+    }
+
+    int actionPointsLeft = apBarActionPoints;
+    int bonusActionPoints = apBarBonusActionPoints;
+
+    // Bulbs spent from the end of each pool, bonus move first. Nothing blinks
+    // for a cost the dude cannot pay.
+    int previewActionPoints = 0;
+    int previewBonusActionPoints = 0;
+    if (apBarPreviewBlinkOff
+        && actionPointsLeft >= 0
+        && apBarPreviewActionPoints <= actionPointsLeft
+        && apBarPreviewBonusActionPoints <= std::max(bonusActionPoints, 0)) {
+        previewActionPoints = apBarPreviewActionPoints;
+        previewBonusActionPoints = apBarPreviewBonusActionPoints;
     }
 
     blitBuffer2D(apBarBackgroundBuf2D(), interfaceWindowBuf2D(), gInterfaceBarContentOffset + apBarXOffset, kApBarYOffset);
@@ -1068,6 +1175,15 @@ void interfaceRenderActionPoints(int actionPointsLeft, int bonusActionPoints)
 
     int numBulbs = actionPointsLeft + bonusActionPoints;
     for (int index = 0; index < numBulbs; index++) {
+        // Compare against the full pools, so a bar clamped to its maximum
+        // only darkens bulbs the cost actually reaches.
+        bool spent = index < actionPointsLeft
+            ? previewActionPoints > 0 && index >= apBarActionPoints - previewActionPoints
+            : previewBonusActionPoints > 0 && index - actionPointsLeft >= apBarBonusActionPoints - previewBonusActionPoints;
+        if (spent) {
+            continue;
+        }
+
         constexpr int bulbXOffset = kApBarBulbSize + kApBarBulbMargin;
         auto frmBuf = index < actionPointsLeft
             ? bulbFrmBuf

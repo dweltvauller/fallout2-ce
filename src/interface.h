@@ -58,6 +58,8 @@ void interfaceBarRefresh();
 void interfaceRenderHitPoints(bool animate);
 void interfaceRenderArmorClass(bool animate);
 void interfaceRenderActionPoints(int actionPointsLeft, int bonusActionPoints);
+void interfaceSetActionPointsPreview(int actionPoints, int bonusActionPoints, bool move);
+void interfaceClearActionPointsPreview();
 int interfaceGetCurrentHitMode(HitMode* hitMode, bool* aiming);
 int interfaceUpdateItems(bool animated, InterfaceItemAction leftItemAction, InterfaceItemAction rightItemAction);
 int interfaceBarSwapHands(bool animated);
